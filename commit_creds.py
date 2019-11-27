@@ -1,52 +1,50 @@
 #!/usr/bin/python3
 
+import ctypes
+import json
 from bcc import BPF
 from time import sleep
 
+class Dredge:
+    
+    def __init__(self):
+        BPF_PROGRAM = "./commit_creds.c"
+        bpf_text = self.read_bpf_program(BPF_PROGRAM)
 
-def load_bpf_program():
-    with open(BPF_PROGRAM, "r") as f:
-        bpf = f.read()
-    return bpf
+        self.b = BPF(text=bpf_text)
+        self.b.attach_kprobe(event="commit_creds", fn_name="print_commit_creds")
+        self.b["creds"].open_perf_buffer(self.print_event)
 
-BPF_PROGRAM = "./commit_creds.c"
-bpf_text = load_bpf_program()
-b = BPF(text=bpf_text)
-b.attach_kprobe(event="commit_creds", fn_name="print_commit_creds")
+    def print_event(self, cpu, data, size):
+            event = self.b["creds"].event(data)
 
-while True:
-    sleep(2)
-    for k,v in b["creds"].items():
-        print(k,v)
+            eventDict = {
+                "command":           event.comm.decode('utf-8'),
+                "process-id":        event.pid,
+                "parent-process-id": event.ppid,
+                "real-uid":          event.uid,
+                "real-gid":          event.gid,
+                "saved-uid":         event.suid,
+                "saved-gid":         event.sgid,
+                "effective-uid":     event.euid,
+                "effective-gid":     event.egid
+            }
+            
+            eventJSON = json.dumps(eventDict)
+            print(eventJSON)
 
-# #!/usr/bin/python2
-# from bcc import BPF
-# from time import sleep
-#
-# program = """
-#     BPF_HASH(syscalls);
-#
-#     int hello(void *ctx) {
-#         u64 counter = 0;
-#         u64 key = 56;
-#         u64 *p;
-#
-#         p = syscalls.lookup(&key);
-#         if (p != 0) {
-#             counter = *p;
-#         }
-#
-#         counter++;
-#         syscalls.update(&key, &counter);
-# 
-#         return 0;
-#     }
-# """
-#
-# b = BPF(text=program)
-# b.attach_kprobe(event="__x64_sys_clone", fn_name="hello")
-#
-# while True:
-#     sleep(3)
-#     for k,v in b["syscalls"].items():
-#         print(k,v)
+    def read_bpf_program(self, prog):
+        with open(prog, "r") as f:
+            bpf = f.read()
+        return bpf
+
+def main():
+    dredge = Dredge()
+    while True:
+        try:
+            dredge.b.perf_buffer_poll()
+        except KeyboardInterrupt:
+            exit()
+
+if __name__ == "__main__":
+    main()
