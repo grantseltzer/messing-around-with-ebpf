@@ -3,9 +3,8 @@
 import ctypes
 import json
 from bcc import BPF
-from time import sleep
 
-class Dredge:
+class CommitCredder:
     
     def __init__(self):
         BPF_PROGRAM = "./commit_creds.c"
@@ -39,10 +38,10 @@ class Dredge:
         return bpf
 
 def main():
-    dredge = Dredge()
+    c = CommitCredder()
     while True:
         try:
-            dredge.b.perf_buffer_poll()
+            c.b.perf_buffer_poll()
         except KeyboardInterrupt:
             exit()
 
