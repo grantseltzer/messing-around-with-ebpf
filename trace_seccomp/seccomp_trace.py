@@ -1,11 +1,5 @@
 #!/usr/bin/python3
 
-
-# FIXME:
-# Some issue with the seccomp syscall
-# trace `do_seccomp()` instead
-#
-
 import ctypes
 import json
 from bcc import BPF
@@ -31,7 +25,7 @@ class SeccompTracer:
             "parent-process-id": event.ppid,
             "operation":         event.operation,
             "flags":             event.flags,
-            # "args":              event.args
+            "args":              event.args
         }
 
         eventJSON = json.dumps(eventDict)

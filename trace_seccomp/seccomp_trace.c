@@ -1,4 +1,7 @@
  #include <linux/sched.h>
+ #include <linux/types.h>
+ #include <linux/filter.h>
+
 
 // Context holds data about the calling process
 typedef struct context {
@@ -8,7 +11,7 @@ typedef struct context {
     char                comm[TASK_COMM_LEN];
     unsigned int        operation;
     unsigned int        flags;
-    // void                *args;  // need to be a pointer to the seccomp structure
+    void                *args;  // need to be a pointer to the seccomp structure
 } context_t;
 
 // Maps
@@ -34,10 +37,29 @@ int trace_and_print_seccomp_calls(struct pt_regs *ctx) {
     context_t context = {};
     init_context(&context);
 
-    bpf_probe_read(&context.operation, sizeof(context.operation), (void *)PT_REGS_PARM1(ctx));
-    bpf_probe_read(&context.flags, sizeof(context.flags), (void *)PT_REGS_PARM2(ctx));
+    struct pt_regs * ctx2 = (struct pt_regs *)ctx->di;
+    bpf_probe_read(&context.operation, sizeof(context.operation), &ctx2->di);
+    bpf_probe_read(&context.flags, sizeof(context.flags), &ctx2->si);
+    bpf_probe_read(&context.args, sizeof(struct sock_fprog*), &ctx2->dx);
 
-    seccomps.perf_submit(ctx, &context, sizeof(context));
+    if (context.flags == 1 && context.operation == 1 && context.args != NULL) {
+        // args is a pointer to a sock_fprog struct
+        
+
+        struct sock_fprog *bpfprogptr = (struct sock_fprog*)context.args;
+        struct sock_fprog bpfprog = {}; 
+        bpf_probe_read(&bpfprog, sizeof(bpfprog), bpfprogptr);
+        bpf_probe_read(&bpfprog.len, sizeof(bpfprog.len), &bpfprog.len);
+        bpf_probe_read(&bpfprog.filter, sizeof(bpfprog.filter), &bpfprog.filter);
+
+        bpf_trace_printk("%x\n", bpfprog);
+        bpf_trace_printk("%d\n", bpfprog.len);
+        bpf_trace_printk("%x\n", bpfprog.filter);
+
+
+        // seccomps.perf_submit(ctx, &context, sizeof(context));
+    }
+
     return 0;
 }
 
