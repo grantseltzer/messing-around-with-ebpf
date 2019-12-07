@@ -7,7 +7,7 @@ from bcc import BPF
 class SeccompTracer:
 
     def __init__(self):
-        BPF_PROGRAM = "./seccomp_trace.c"
+        BPF_PROGRAM = "./init_data.c"
         bpf_text = self.read_bpf_program(BPF_PROGRAM)
 
         self.b = BPF(text=bpf_text)
