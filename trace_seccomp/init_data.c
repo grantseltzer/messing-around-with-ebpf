@@ -1,25 +1,36 @@
- #include <linux/sched.h>
- #include <linux/types.h>
- #include <linux/filter.h>
+#include <linux/sched.h>
+#include <linux/types.h>
+#include <linux/filter.h>
 
 // Maps
-BPF_PERF_OUTPUT(seccomps);
-BPF_HASH(pids, u64, u64); // 0 = pid
+BPF_PERF_OUTPUT(output);
 BPF_HASH(seccompf, u64, struct sock_fprog); 
 
+// proc_context_t holds data about the calling process
+typedef struct proc_context {
+    u32                 pid;
+    u32                 tgid;
+    u32                 ppid;
+    char                comm[TASK_COMM_LEN];
+} proc_context_t;
 
-// function that's actually called on process calling seccomp(2)
-int trace_and_print_seccomp_calls(struct pt_regs *ctx) {
-    
-	u64 pid = bpf_get_current_pid_tgid();
-    u64 z = 1;
-    pids.update(&z, &pid);
+// init_bpf_seccomp_data reads the bpf program struct from the seccomp(2) calling procces
+int init_bpf_seccomp_data(struct pt_regs *ctx) {
+
+    proc_context_t proc = {};
+    struct task_struct *task;
+    task = (struct task_struct *)bpf_get_current_task();
+
+    proc.pid = task->pid;
+    proc.tgid = task->tgid;
+    proc.ppid = task->real_parent->pid;
+    bpf_get_current_comm(&proc.comm, sizeof(proc.comm));
 
     unsigned int        operation;
     unsigned int        flags;
     void                *args;
 
-    // Read in seccomp(2) arguments manually from registers (can't use bcc bindings because of bug)
+    // Read in seccomp(2) arguments manually from registers (can't use bcc bindings because of issue #___)
     struct pt_regs * ctx2 = (struct pt_regs *)ctx->di;
     bpf_probe_read(&operation, sizeof(operation), &ctx2->di);
     bpf_probe_read(&flags, sizeof(flags), &ctx2->si);
@@ -36,18 +47,35 @@ int trace_and_print_seccomp_calls(struct pt_regs *ctx) {
         bpf_probe_read(&bpfprog.len, sizeof(bpfprog.len), &bpfprog.len);
         bpf_probe_read(&bpfprog.filter, sizeof(bpfprog.filter), &bpfprog.filter);
        
-        bpf_trace_printk("%d\n", bpfprog.len);
+        bpf_trace_printk("Number of filters: %d\n", bpfprog.len);
         bpf_trace_printk("%x\n", bpfprog.filter);
 
-
-        //XXX: Need to confirm that the bpfprog struct can be shared the way I want it
-        //     (i.e. access it directly from another ebpf program (has sock_fprog imported) without having to re-bpf_probe_read)
         u64 zero = 0;
         seccompf.update(&zero, &bpfprog);
-
-    
-        // TODO: read through filters, determine the syscall numbers, put them in the context, then submit the context:
+        output.perf_submit(ctx, &proc, sizeof(proc));
     }
 
+    return 0;
+}
+
+int interpret_bpf_progs_as_syscalls(struct pt_regs *ctx) {
+    u64 zero = 0;
+    struct sock_fprog *bpfprog_ptr  = (struct sock_fprog*)seccompf.lookup(&zero);
+    if (bpfprog_ptr == NULL) {
+        return -1;
+    }
+
+    struct sock_filter *curAddr = bpfprog_ptr->filter;
+    int sizeOfSockFprog = sizeof(*curAddr);
+    int i;
+    u16 code;
+
+    for (i = 0; i < 100; i++) {
+        bpf_probe_read(&code, sizeof(code), &curAddr->code);
+        bpf_trace_printk("code of instruction: %d\n", code);
+        curAddr = curAddr + sizeOfSockFprog;
+    }
+
+    // loop through, incrementing a memory address where to find 'code' in sock_filter and print those out
     return 0;
 }

@@ -7,25 +7,26 @@ from bcc import BPF
 class SeccompTracer:
 
     def __init__(self):
-        BPF_PROGRAM = "./init_data.c"
-        bpf_text = self.read_bpf_program(BPF_PROGRAM)
+        seccomp_interpret = "./init_data.c"
 
-        self.b = BPF(text=bpf_text)
+        seccomp_interpret_code = self.read_bpf_program(seccomp_interpret)
+
+        self.b = BPF(text=seccomp_interpret_code)
        
         seccompFnName = self.b.get_syscall_fnname("seccomp")
-        self.b.attach_kprobe(event=seccompFnName, fn_name="trace_and_print_seccomp_calls")
-        self.b["seccomps"].open_perf_buffer(self.print_event)
+        self.b.attach_kprobe(event=seccompFnName, fn_name="interpret_bpf_progs_as_syscalls")
+        self.b.attach_kprobe(event=seccompFnName, fn_name="init_bpf_seccomp_data")            # init is attached last so that it's executed first (go figure...)
+
+        self.b["output"].open_perf_buffer(self.print_event)
 
     def print_event(self, cpu, data, size):
-        event = self.b["seccomps"].event(data)
+        event = self.b["output"].event(data)
 
         eventDict = {
             "command":           event.comm.decode('utf-8'),
             "process-id":        event.pid,
             "parent-process-id": event.ppid,
-            "operation":         event.operation,
-            "flags":             event.flags,
-            "args":              event.args
+            "thread-group-id":   event.tgid
         }
 
         eventJSON = json.dumps(eventDict)
