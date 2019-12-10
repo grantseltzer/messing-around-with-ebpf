@@ -1,6 +1,8 @@
 #include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/filter.h>
+#include <linux/bpf_common.h>
+#include <linux/kernel.h>
 
 // Maps
 BPF_PERF_OUTPUT(output);
@@ -47,8 +49,7 @@ int init_bpf_seccomp_data(struct pt_regs *ctx) {
         bpf_probe_read(&bpfprog.len, sizeof(bpfprog.len), &bpfprog.len);
         bpf_probe_read(&bpfprog.filter, sizeof(bpfprog.filter), &bpfprog.filter);
        
-        bpf_trace_printk("Number of filters: %d\n", bpfprog.len);
-        bpf_trace_printk("%x\n", bpfprog.filter);
+        bpf_trace_printk("Number of instructions: %d\n", bpfprog.len);
 
         u64 zero = 0;
         seccompf.update(&zero, &bpfprog);
@@ -69,13 +70,29 @@ int interpret_bpf_progs_as_syscalls(struct pt_regs *ctx) {
     int sizeOfSockFprog = sizeof(*curAddr);
     int i;
     u16 code;
+    u32 k;
 
+    u16 bpf_statement_code = (BPF_LD | BPF_W | BPF_ABS);
+    u16 bpf_jump_code = (BPF_JMP | BPF_JEQ | BPF_K); //XXX: May also be other jumps (i.e. JNE) Extract the BPF_JUMP
+    
+    //FIXME: If it's a jump, skip the pointer ahead (actually execute the code looking for statements that load syscall nrs)
     for (i = 0; i < 100; i++) {
         bpf_probe_read(&code, sizeof(code), &curAddr->code);
         bpf_trace_printk("code of instruction: %d\n", code);
+
+        if (code != bpf_statement_code) {
+            bpf_trace_printk("Skipping\n");
+            continue;
+        }
+ 
+        bpf_probe_read(&k, sizeof(k), &curAddr->k);
+        bpf_trace_printk("k of instruction: %d\n\n", k);
+
+        // Only care about the BPF_STMT because that's what will be operating
+        // on the seccomp buffer? Can we determine that by curAddr->code?
+
         curAddr = curAddr + sizeOfSockFprog;
     }
 
-    // loop through, incrementing a memory address where to find 'code' in sock_filter and print those out
     return 0;
 }
