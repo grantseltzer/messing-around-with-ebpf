@@ -64,7 +64,7 @@ func main() {
 	helloKprobe, err := m.LoadKprobe("helloworld")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load helloworld: %s\n", err)
-		os.Exit(1)v
+		os.Exit(1)
 	}
 
 	syscallName := bpf.GetSyscallFnName("clone")
