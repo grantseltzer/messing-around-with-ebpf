@@ -74,25 +74,28 @@ int interpret_bpf_progs_as_syscalls(struct pt_regs *ctx) {
 
     u16 bpf_statement_code = (BPF_LD | BPF_W | BPF_ABS);
     u16 bpf_jump_code = (BPF_JMP | BPF_JEQ | BPF_K); //XXX: May also be other jumps (i.e. JNE) Extract the BPF_JUMP
-    
-    //FIXME: If it's a jump, skip the pointer ahead (actually execute the code looking for statements that load syscall nrs)
+    struct seccomp_data *my_data;
+
+    //FIXME: If it's a jump, skip the pointer ahead evaluated amount
+   
     for (i = 0; i < 100; i++) {
+
         bpf_probe_read(&code, sizeof(code), &curAddr->code);
-        bpf_trace_printk("code of instruction: %d\n", code);
 
-        if (code != bpf_statement_code) {
-            bpf_trace_printk("Skipping\n");
-            continue;
+        if (code == bpf_statement_code) {
+            bpf_probe_read(&k, sizeof(k), &curAddr->k);
+            my_data = (struct seccomp_data*)&k;
+            // bpf_probe_read(&data_addr->nr, sizeof(data_addr->nr), &data_addr->nr);
+            bpf_trace_printk("k of instruction: %d\n\n", my_data->nr);
         }
- 
-        bpf_probe_read(&k, sizeof(k), &curAddr->k);
-        bpf_trace_printk("k of instruction: %d\n\n", k);
-
-        // Only care about the BPF_STMT because that's what will be operating
-        // on the seccomp buffer? Can we determine that by curAddr->code?
 
         curAddr = curAddr + sizeOfSockFprog;
     }
 
     return 0;
 }
+
+
+// Instead of tracing syscall, do a kretprobe on seccomp_prepare_filter
+// also do a kretprobe on the top level calling function to make sure
+// it was installed succesfully
