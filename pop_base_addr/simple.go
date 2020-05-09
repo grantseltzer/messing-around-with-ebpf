@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
+	"time"
 )
 
 //go:noinline
-func handlerFunction(x int) {
+func function(x int) {
 	fmt.Println(x)
+	time.Sleep(time.Second)
+	fmt.Println("It's February 2nd!")
 }
 
 func main() {
-	handlerFunction(3)
+	function(3)
 }
