@@ -11,14 +11,11 @@ import (
 const eBPF_Program = `
 #include <uapi/linux/ptrace.h>
 
-
 int function(struct pt_regs *ctx) {
  
-
 	void* stackAddr = (void*)ctx->sp;
 
 	unsigned long returnAddress;
-
 	void* returnAddressPtr = (void*)&returnAddress;
 
 	bpf_probe_read(returnAddressPtr, sizeof(returnAddress), stackAddr);
@@ -29,7 +26,6 @@ int function(struct pt_regs *ctx) {
 
 	return 0;
 }
-
 `
 
 func main() {
