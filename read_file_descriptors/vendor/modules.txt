@@ -1,0 +1,4 @@
+# github.com/iovisor/gobpf v0.0.0-20200614202714-e6b321d32103
+## explicit
+github.com/iovisor/gobpf/bcc
+github.com/iovisor/gobpf/pkg/cpuonline
