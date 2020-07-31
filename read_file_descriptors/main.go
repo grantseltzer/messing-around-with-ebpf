@@ -13,14 +13,29 @@ const eBPF_Program = `
 
 BPF_PERF_OUTPUT(events);
 
-int function(struct pt_regs *ctx) {
- 
-	const char* pathAddr;
-	char path[100];
-	bpf_probe_read(&pathAddr, sizeof(pathAddr), (void*)PT_REGS_PARM2(ctx));
-	bpf_probe_read_user_str(&path, sizeof(path), pathAddr);
-	bpf_trace_printk("%s\n", path);
+typedef struct args {
+    unsigned long args[6]; //TODO: put actual fields for mmap args instead of all unsigned longs
+} args_t;
 
+
+int trace_mmap(struct pt_regs *ctx) {
+
+	u32 pid = (u32)bpf_get_current_pid_tgid();
+	args_t args = {};
+
+	// In kernel 4.17+ the actual context is stored by reference in di register
+	struct pt_regs * actualCtx = (struct pt_regs *)ctx->di;
+	bpf_probe_read(&args.args[0], sizeof(args.args[0]), &actualCtx->di);
+	bpf_probe_read(&args.args[1], sizeof(args.args[1]), &actualCtx->si);
+	bpf_probe_read(&args.args[2], sizeof(args.args[2]), &actualCtx->dx);
+	bpf_probe_read(&args.args[3], sizeof(args.args[3]), &actualCtx->r10);
+	bpf_probe_read(&args.args[4], sizeof(args.args[4]), &actualCtx->r8);
+	bpf_probe_read(&args.args[5], sizeof(args.args[5]), &actualCtx->r9);
+
+	unsigned long fd;
+	bpf_probe_read(&fd, sizeof(fd), &args.args[4]);
+	
+	bpf_trace_printk("(%d) %d\n", pid, fd);
 	return 0;
 }
 `
@@ -29,27 +44,16 @@ func main() {
 
 	bpfModule := bcc.NewModule(eBPF_Program, []string{})
 
-	funcFD, err := bpfModule.LoadKprobe("function")
+	funcFD, err := bpfModule.LoadKprobe("trace_mmap")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	possibleFuncs := []string{
-		"do_sys_openat2",
-		"__ia32_sys_openat2",
-		"__x64_sys_openat2",
-		"__x64_sys_openat",
-		"__ia32_compat_sys_openat",
-		"__ia32_sys_openat",
-		"path_openat",
-		"io_openat2",
-	}
+	syscallPrefix := bcc.GetSyscallPrefix()
 
-	for _, f := range possibleFuncs {
-		err = bpfModule.AttachKprobe(f, funcFD, -1)
-		if err != nil {
-			log.Fatal(err)
-		}
+	err = bpfModule.AttachKprobe(syscallPrefix+"mmap", funcFD, -1)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	c := make(chan os.Signal, 1)
@@ -57,33 +61,3 @@ func main() {
 
 	<-c
 }
-
-/*
-
-
-
-	bpf_probe_read_user(&buf, sizeof(buf), (void *)PT_REGS_PARM1(ctx));
-	bpf_trace_printk("%s %d", buf, PT_REGS_PARM2(ctx));
-
-
-
-  int key;
-  bpf_probe_read_user(&key, sizeof(key), (void*)pid_data->tls_key_addr);
-
-
-
-
-
-
-struct event {
-    char filename[16];
-    int dfd;
-    int flags;
-    int mode;
-};
-TRACEPOINT_PROBE(syscalls, sys_enter_openat) {
-    int zero = 0;
-    struct event event = {};
-    bpf_probe_read_user_str(event.filename, sizeof(event.filename), args->filename);
-
-*/
