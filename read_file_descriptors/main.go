@@ -4,17 +4,24 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/iovisor/gobpf/bcc"
 )
 
+//TODO:
+// Return value of mmap is pointer to the region
+
 const eBPF_Program = `
 #include <uapi/linux/ptrace.h>
 
-BPF_PERF_OUTPUT(events);
-
-typedef struct args {
-    unsigned long args[6]; //TODO: put actual fields for mmap args instead of all unsigned longs
+typedef struct mmap_args {
+	void* addr;
+	size_t length;
+	int prot;
+	int flags;
+	int fd;
+	off_t offset;
 } args_t;
 
 
@@ -25,17 +32,14 @@ int trace_mmap(struct pt_regs *ctx) {
 
 	// In kernel 4.17+ the actual context is stored by reference in di register
 	struct pt_regs * actualCtx = (struct pt_regs *)ctx->di;
-	bpf_probe_read(&args.args[0], sizeof(args.args[0]), &actualCtx->di);
-	bpf_probe_read(&args.args[1], sizeof(args.args[1]), &actualCtx->si);
-	bpf_probe_read(&args.args[2], sizeof(args.args[2]), &actualCtx->dx);
-	bpf_probe_read(&args.args[3], sizeof(args.args[3]), &actualCtx->r10);
-	bpf_probe_read(&args.args[4], sizeof(args.args[4]), &actualCtx->r8);
-	bpf_probe_read(&args.args[5], sizeof(args.args[5]), &actualCtx->r9);
+	bpf_probe_read(&args.addr, sizeof(args.addr), &actualCtx->di);
+	bpf_probe_read(&args.length, sizeof(args.length), &actualCtx->si);
+	bpf_probe_read(&args.prot, sizeof(args.prot), &actualCtx->dx);
+	bpf_probe_read(&args.flags, sizeof(args.flags), &actualCtx->r10);
+	bpf_probe_read(&args.fd, sizeof(args.fd), &actualCtx->r8);
+	bpf_probe_read(&args.offset, sizeof(args.offset), &actualCtx->r9);
 
-	unsigned long fd;
-	bpf_probe_read(&fd, sizeof(fd), &args.args[4]);
-	
-	bpf_trace_printk("(%d) %d\n", pid, fd);
+	bpf_trace_printk("(%d) %d\n", pid, args.fd);
 	return 0;
 }
 `
@@ -60,4 +64,22 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 
 	<-c
+}
+
+func printMemoryProtectionFlag(flag uint32) string {
+	var protectionFlags []string
+	if flag == 0x0 {
+		protectionFlags = append(protectionFlags, "PROT_NONE")
+	}
+	if flag&0x01 == 0x01 {
+		protectionFlags = append(protectionFlags, "PROT_READ")
+	}
+	if flag&0x02 == 0x02 {
+		protectionFlags = append(protectionFlags, "PROT_WRITE")
+	}
+	if flag&0x04 == 0x04 {
+		protectionFlags = append(protectionFlags, "PROT_EXEC")
+	}
+
+	return strings.Join(protectionFlags, "|")
 }
