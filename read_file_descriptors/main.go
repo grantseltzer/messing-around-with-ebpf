@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -22,11 +23,11 @@ BPF_PERF_OUTPUT(events);
 
 typedef struct mmap_args {
 	u32 pid;
+	int fd;
 	void* addr;
 	size_t length;
 	int prot;
 	int flags;
-	int fd;
 	off_t offset;
 } args_t;
 
@@ -35,7 +36,7 @@ int trace_mmap(struct pt_regs *ctx) {
 
 	args_t args = {};
 	args.pid = (u32)bpf_get_current_pid_tgid();
-
+	
 	// In kernel 4.17+ the actual context is stored by reference in di register
 	struct pt_regs * actualCtx = (struct pt_regs *)ctx->di;
 	bpf_probe_read(&args.addr, sizeof(args.addr), &actualCtx->di);
@@ -45,6 +46,18 @@ int trace_mmap(struct pt_regs *ctx) {
 	bpf_probe_read(&args.fd, sizeof(args.fd), &actualCtx->r8);
 	bpf_probe_read(&args.offset, sizeof(args.offset), &actualCtx->r9);
 
+	// args_t TEST_ARGS = {};
+	// TEST_ARGS.pid = 0xFFFFFFFF;
+	// TEST_ARGS.fd = 0xFFFFFFFF;;
+	// TEST_ARGS.addr = (void*)0xFFFFFFFFFFFFFFFF;
+	// TEST_ARGS.length = 0xFFFFFFFFFFFFFFFF;
+	// TEST_ARGS.prot = 0xFFFFFFFF;
+	// TEST_ARGS.flags = 0xFFFFFFFF;
+	// TEST_ARGS.offset = 0xFFFFFFFFFFFFFFFF;
+
+	// bpf_trace_printk("1: %d\n", sizeof(TEST_ARGS));
+	// bpf_trace_printk("2: %d\n\n\n", sizeof(TEST_ARGS.offset));
+
 	events.perf_submit(ctx, &args, sizeof(args));
 
 	return 0;
@@ -53,27 +66,26 @@ int trace_mmap(struct pt_regs *ctx) {
 
 type mmap_args struct {
 	processID uint32
+	fd        uint32
 	addr      uint64
 	length    uint64
 	prot      uint32
 	flags     uint32
-	fd        uint32
 	offset    uint64
 }
 
 func (m *mmap_args) unmarshalBinaryData(data []byte) error {
 
-	if len(data) != 40 {
+	if len(data) != 44 {
 		return errors.New("incorrect number of bytes in binary data for decoding")
 	}
 
-	data = bytes.Trim(data, "\x00")
 	m.processID = binary.LittleEndian.Uint32(data[0:4])
-	m.addr = binary.LittleEndian.Uint64(data[4:12])
-	m.length = binary.LittleEndian.Uint64(data[12:20])
-	m.prot = binary.LittleEndian.Uint32(data[20:24])
-	m.flags = binary.LittleEndian.Uint32(data[24:28])
-	m.fd = binary.LittleEndian.Uint32(data[28:32])
+	m.fd = binary.LittleEndian.Uint32(data[4:8])
+	m.addr = binary.LittleEndian.Uint64(data[8:16])
+	m.length = binary.LittleEndian.Uint64(data[16:24])
+	m.prot = binary.LittleEndian.Uint32(data[24:28])
+	m.flags = binary.LittleEndian.Uint32(data[28:32])
 	m.offset = binary.LittleEndian.Uint64(data[32:40])
 	return nil
 }
@@ -105,9 +117,16 @@ func main() {
 		for {
 			value := <-channel
 			mmapInfo := mmap_args{}
-			mmapInfo.unmarshalBinaryData(value)
+			err = mmapInfo.unmarshalBinaryData(value)
+			if err != nil {
+				log.Fatal(err)
+			}
+			printMMapArgs(&mmapInfo)
 		}
 	}()
+
+	perfMap.Start()
+	defer perfMap.Stop()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -115,7 +134,37 @@ func main() {
 	<-c
 }
 
-func printMemoryProtectionFlag(prot uint32) string {
+func printMMapArgs(m *mmap_args) error {
+
+	x := struct {
+		PID, Addr, Length, Protection, Flags, FileDescriptor, Offset string
+	}{
+		PID:            fmt.Sprint(m.processID),
+		Addr:           sprintAddr(m.addr),
+		Length:         fmt.Sprint(m.length),
+		Protection:     sprintMemoryProtectionFlag(m.prot),
+		Flags:          sprintMemoryVisibilityFlag(m.flags),
+		FileDescriptor: fmt.Sprint(m.fd),
+		Offset:         fmt.Sprint(m.offset),
+	}
+
+	jsonBytes, err := json.Marshal(x)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", jsonBytes)
+	return nil
+}
+
+func sprintAddr(addr uint64) string {
+	if addr == 0 {
+		return "NULL"
+	}
+
+	return fmt.Sprintf("%x", addr)
+}
+
+func sprintMemoryProtectionFlag(prot uint32) string {
 	var protectionFlags []string
 	if prot == 0x0 {
 		protectionFlags = append(protectionFlags, "PROT_NONE")
@@ -133,7 +182,7 @@ func printMemoryProtectionFlag(prot uint32) string {
 	return strings.Join(protectionFlags, "|")
 }
 
-func printMemoryVisibilityFlag(vis uint32) string {
+func sprintMemoryVisibilityFlag(vis uint32) string {
 
 	var visibilityFlags []string
 
