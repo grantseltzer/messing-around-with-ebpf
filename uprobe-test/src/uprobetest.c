@@ -15,6 +15,33 @@ static const struct argp_option opts[] = {
     {},
 };
 
+// In order to calculate the offset for a uprobe to attach to
+// has to be the offset from the top of the executable section
+// of data in the process. This calculates that base address 
+// by reading /proc/[pid]/maps and finding the executable
+// section
+ssize_t get_base_addr() {
+	size_t start, offset;
+	char buf[256];
+	FILE *f;
+
+    //FIX: do target PID instead of self
+	f = fopen("/proc/self/maps", "r");
+	if (!f)
+		return -errno;
+
+	while (fscanf(f, "%zx-%*x %s %zx %*[^\n]\n",
+		      &start, buf, &offset) == 3) {
+		if (strcmp(buf, "r-xp") == 0) {
+			fclose(f);
+			return start - offset;
+		}
+	}
+
+	fclose(f);
+	return -EINVAL;
+}
+
 static error_t parse_arg(int key, char *arg, struct argp_state *state)
 {
     static int pos_args;
@@ -53,7 +80,7 @@ int libbpf_print_fn(enum libbpf_print_level level,
 static int handle_event(void *ctx, void *data, size_t len)
 {
     struct process_info *s = (struct process_info*)data;
-	printf("%u\n", s->uint8);
+	printf("%d >%d<\n", s->pid, s->arg);
 	return 0;
 }
 
@@ -65,7 +92,6 @@ void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt)
 
 int main(int argc, char **argv) 
 {
-
 	int err;
 
 	err = bump_memlock_rlimit();
@@ -92,8 +118,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	obj->rodata->target_tgid = env.pid;
-
     err = uprobetest_bpf__load(obj);
     if (err) {
 		fprintf(stderr, "failed to load BPF object: %d\n", err);
@@ -107,7 +131,7 @@ int main(int argc, char **argv)
     }
 
     struct bpf_link *link;
-    link = bpf_program__attach_uprobe(prog, false, -1, "/home/grant/tester", 0x5dba0); /* Got this offset from objdump but I dropped the leading digit i.e.: `000000000045dc60 g    F .text	0000000000000001 main.test_combined_byte`*/
+    link = bpf_program__attach_uprobe(prog, false, -1, "/home/grant/tester", 0x5db80); /* Got this offset from objdump but I dropped the leading digit i.e.: `000000000045dc60 g    F .text	0000000000000001 main.test_combined_byte`*/
     if (!link) {
         fprintf(stderr, "fack\n");
         goto cleanup;
