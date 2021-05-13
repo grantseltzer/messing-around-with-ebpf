@@ -1,6 +1,11 @@
 //+build ignore
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>  
+#include <bpf/bpf_core_read.h>
+
+char LICENSE[] SEC("license") = "GPL";
+
+#define TASK_COMM_LEN 16
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -10,11 +15,13 @@ struct {
 long ringbuffer_flags = 0;
 
 struct event {
-	u64 pid;
+	u32 pid;
+    u32 ppid;
+    char comm[TASK_COMM_LEN];
 };
 
-SEC("kprobe/sys_write")
-int kprobe__sys_write(struct pt_regs *ctx)
+SEC("kprobe/sys_execve")
+int kprobe__sys_execve(struct pt_regs *ctx)
 {
     struct event *record;
 
@@ -24,8 +31,11 @@ int kprobe__sys_write(struct pt_regs *ctx)
         return 0;
     }
 
-    u64 id = bpf_get_current_pid_tgid();
-    (*record).pid = id; 
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+
+    record->ppid = BPF_CORE_READ(task, pid);
+    record->pid = BPF_CORE_READ(task, real_parent, pid);
+    bpf_get_current_comm(&record->comm, sizeof(record->comm));
 
     bpf_ringbuf_submit(record, ringbuffer_flags);
 

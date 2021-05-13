@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"os"
 
-	bpf "github.com/aquasecurity/tracee/libbpfgo"
+	bpf "github.com/aquasecurity/libbpfgo"
 )
 
 type Event struct {
-	PID uint32
+	PID  uint32
+	PPID uint32
+	COMM [16]byte
 }
 
 func main() {
@@ -24,12 +26,12 @@ func main() {
 	defer bpfModule.Close()
 
 	bpfModule.BPFLoadObject()
-	prog, err := bpfModule.GetProgram("kprobe__sys_write")
+	prog, err := bpfModule.GetProgram("kprobe__sys_execve")
 	if err != nil {
 		os.Exit(-1)
 	}
 
-	_, err = prog.AttachKprobe("__x64_sys_write")
+	_, err = prog.AttachKprobe("__x64_sys_execve")
 	if err != nil {
 		os.Exit(-1)
 	}
@@ -44,10 +46,10 @@ func main() {
 
 	for {
 		b := <-eventsChannel
-		buffer := bytes.NewBuffer(b[:])
+		buffer := bytes.NewBuffer(b)
 		ev := Event{}
 		binary.Read(buffer, binary.LittleEndian, &ev)
-		fmt.Println(ev.PID)
+		fmt.Printf("PID: %d PPID: %d COMM: %s\n", ev.PID, ev.PPID, ev.COMM[:])
 	}
 
 	rb.Stop()
